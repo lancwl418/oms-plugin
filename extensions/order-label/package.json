@@ -1,0 +1,16 @@
+{
+  "name": "order-label-extension",
+  "private": true,
+  "scripts": {
+    "build": "shopify app build --path ../../",
+    "dev": "shopify app dev --path ../../"
+  },
+  "dependencies": {
+    "@shopify/ui-extensions-react": "^2025.1.0",
+    "@shopify/ui-extensions": "^2025.1.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

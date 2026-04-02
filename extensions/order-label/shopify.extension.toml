@@ -1,0 +1,10 @@
+api_version = "2025-01"
+
+[[extensions]]
+name = "OMS Label"
+handle = "order-label"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  module = "./src/OrderLabelExtension.tsx"
+  target = "admin.order-details.block.render"
