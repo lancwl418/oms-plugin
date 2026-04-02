@@ -16,6 +16,7 @@ export async function beginAuth(req: NextRequest): Promise<NextResponse> {
     shop,
     callbackPath: "/api/auth/callback",
     isOnline: false,
+    rawRequest: req,
   });
 
   if (authRoute.session) {

@@ -1,22 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApi } from "@/lib/shopify/verify";
+import { fetchShopifyOrder } from "@/lib/shopify/orders";
 import { getTrackDetails, getTrackingNumber } from "@/lib/eccangtms/client";
 import { pushFulfillmentToShopify } from "@/lib/shopify/fulfillments";
 import { ECCANG_TRAVEL_STATUS } from "@/lib/eccangtms/types";
 import { z } from "zod";
 
 const schema = z.object({
+  orderId: z.string().optional(),
   orderNo: z.string().optional(),
   serverNo: z.string().optional(),
-  // For auto-pushing fulfillment back to Shopify
-  shopifyOrderId: z.string().optional(),
   autoFulfill: z.boolean().default(false),
 });
 
 /**
  * POST /api/oms/track
  * Get tracking info from OMS.
- * If autoFulfill=true and shopifyOrderId provided, pushes tracking to Shopify automatically.
+ * Supports orderId (Shopify GID) — will resolve to orderNo automatically.
+ * If autoFulfill=true, pushes tracking to Shopify.
  */
 export async function POST(req: NextRequest) {
   const auth = await authenticateApi(req);
@@ -30,12 +31,30 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Provide orderNo or serverNo" }, { status: 400 });
+    return NextResponse.json({ error: "Provide orderId, orderNo, or serverNo" }, { status: 400 });
   }
 
   const creds = { apiToken: settings.omsApiToken, baseUrl: settings.omsBaseUrl };
   let { serverNo } = parsed.data;
-  const { orderNo, shopifyOrderId, autoFulfill } = parsed.data;
+  let { orderNo } = parsed.data;
+  const { orderId, autoFulfill } = parsed.data;
+
+  // Resolve orderId to orderNo via Shopify order name
+  let shopifyOrderNumericId: string | undefined;
+  if (!orderNo && orderId) {
+    try {
+      const shopifyOrder = await fetchShopifyOrder(
+        auth.store.shopDomain,
+        auth.store.accessToken,
+        orderId
+      );
+      // Use order name (e.g. "#1001") stripped of "#" as the OMS customerNo
+      orderNo = shopifyOrder.orderNumber.replace("#", "");
+      shopifyOrderNumericId = shopifyOrder.orderNumericId;
+    } catch {
+      return NextResponse.json({ error: "Failed to fetch Shopify order" }, { status: 500 });
+    }
+  }
 
   try {
     // Step 1: If no serverNo, get it from orderNo
@@ -57,12 +76,12 @@ export async function POST(req: NextRequest) {
 
     // Step 2: Auto-push fulfillment to Shopify if requested
     let fulfillmentResult = null;
-    if (autoFulfill && shopifyOrderId) {
+    if (autoFulfill && shopifyOrderNumericId) {
       try {
         fulfillmentResult = await pushFulfillmentToShopify({
           shopDomain: auth.store.shopDomain,
           accessToken: auth.store.accessToken,
-          shopifyOrderId,
+          shopifyOrderId: shopifyOrderNumericId,
           trackingNumber: serverNo,
           carrier: "USPS",
         });
@@ -97,10 +116,13 @@ export async function POST(req: NextRequest) {
     }
 
     const detail = details[0];
+    const mappedStatus = ECCANG_TRAVEL_STATUS[String(detail.status)] || "unknown";
+
     return NextResponse.json({
       success: true,
       trackingNumber: serverNo,
-      status: ECCANG_TRAVEL_STATUS[String(detail.status)] || "unknown",
+      status: mappedStatus,
+      mappedStatus,
       tracking: detail,
       fulfillment: fulfillmentResult,
     });

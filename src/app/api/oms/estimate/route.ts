@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApi } from "@/lib/shopify/verify";
+import { fetchShopifyOrder } from "@/lib/shopify/orders";
 import { calculateShipping } from "@/lib/eccangtms/client";
 import { mapOrderToEccangParams } from "@/lib/eccangtms/mapper";
 import { z } from "zod";
 
 const schema = z.object({
-  order: z.object({
-    orderNumber: z.string(),
-    customerName: z.string().optional(),
-    customerEmail: z.string().optional(),
-    shippingAddress: z.record(z.string()),
-    totalPrice: z.number(),
-    currency: z.string().default("USD"),
-  }),
+  orderId: z.string().min(1),
   packageInfo: z.object({
     weightLbs: z.number().positive(),
     lengthIn: z.number().positive(),
@@ -22,7 +16,7 @@ const schema = z.object({
 });
 
 /**
- * POST /api/oms/estimate — estimate shipping costs. Order data in, estimates out.
+ * POST /api/oms/estimate — estimate shipping costs by orderId.
  */
 export async function POST(req: NextRequest) {
   const auth = await authenticateApi(req);
@@ -43,7 +37,13 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const params = mapOrderToEccangParams(parsed.data.order, settings, "", parsed.data.packageInfo);
+    const order = await fetchShopifyOrder(
+      auth.store.shopDomain,
+      auth.store.accessToken,
+      parsed.data.orderId
+    );
+
+    const params = mapOrderToEccangParams(order, settings, "", parsed.data.packageInfo);
     const { productCode: _, ...paramsWithoutProduct } = params;
     const estimates = await calculateShipping(
       { apiToken: settings.omsApiToken, baseUrl: settings.omsBaseUrl },

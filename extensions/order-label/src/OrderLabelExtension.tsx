@@ -8,15 +8,10 @@ import {
   Button,
   Banner,
   Divider,
-  TextField,
+  NumberField,
   Select,
 } from "@shopify/ui-extensions-react/admin";
 import { useState, useEffect } from "react";
-
-interface Product {
-  code: string;
-  name: string;
-}
 
 interface Estimate {
   productCode: string;
@@ -37,25 +32,27 @@ interface ShipmentInfo {
 type ViewState = "idle" | "loading" | "estimate" | "pushed" | "tracking" | "error";
 
 function Extension() {
-  const { data, sessionToken } = useApi<"admin.order-details.block.render">();
+  const { data, auth } = useApi<"admin.order-details.block.render">();
   const orderId = data.selected?.[0]?.id;
 
   const [view, setView] = useState<ViewState>("idle");
   const [error, setError] = useState("");
-  const [products, setProducts] = useState<Product[]>([]);
   const [estimates, setEstimates] = useState<Estimate[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
   const [shipment, setShipment] = useState<ShipmentInfo | null>(null);
   const [trackingInfo, setTrackingInfo] = useState<Record<string, unknown> | null>(null);
 
   // Package info
-  const [weight, setWeight] = useState("1");
-  const [length, setLength] = useState("12");
-  const [width, setWidth] = useState("10");
-  const [height, setHeight] = useState("3");
+  const [weight, setWeight] = useState(1);
+  const [length, setLength] = useState(12);
+  const [width, setWidth] = useState(10);
+  const [height, setHeight] = useState(3);
 
   async function apiCall(path: string, options: RequestInit = {}) {
-    const token = await sessionToken.get();
+    const token = await auth.idToken();
+    if (!token) {
+      throw new Error("Could not get session token");
+    }
     const res = await fetch(`/api${path}`, {
       ...options,
       headers: {
@@ -69,10 +66,10 @@ function Extension() {
 
   function getPackageInfo() {
     return {
-      weightLbs: parseFloat(weight) || 1,
-      lengthIn: parseFloat(length) || 12,
-      widthIn: parseFloat(width) || 10,
-      heightIn: parseFloat(height) || 3,
+      weightLbs: weight || 1,
+      lengthIn: length || 12,
+      widthIn: width || 10,
+      heightIn: height || 3,
     };
   }
 
@@ -88,15 +85,15 @@ function Extension() {
         method: "POST",
         body: JSON.stringify({ orderId }),
       });
-      if (result.success && result.tracking) {
+      if (result.success && result.trackingNumber) {
         setShipment({
           omsOrderNo: "",
           trackingNumber: result.trackingNumber,
-          status: result.mappedStatus,
+          status: result.mappedStatus || "unknown",
           productName: "",
           shippingCost: 0,
         });
-        setTrackingInfo(result.tracking);
+        setTrackingInfo(result.tracking || null);
         setView("tracking");
       }
     } catch {
@@ -124,7 +121,7 @@ function Extension() {
         setSelectedProduct(result[0].productCode);
       }
       setView("estimate");
-    } catch (e) {
+    } catch {
       setError("Failed to get estimates");
       setView("error");
     }
@@ -151,14 +148,14 @@ function Extension() {
       }
 
       setShipment({
-        omsOrderNo: result.omsOrder.orderNo,
-        trackingNumber: result.omsOrder.serverNo,
+        omsOrderNo: result.orderNo,
+        trackingNumber: result.serverNo,
         status: "label_created",
-        productName: result.omsOrder.productName,
-        shippingCost: result.omsOrder.totalPrice,
+        productName: result.productName,
+        shippingCost: result.totalPrice,
       });
       setView("pushed");
-    } catch (e) {
+    } catch {
       setError("Failed to create label");
       setView("error");
     }
@@ -172,15 +169,13 @@ function Extension() {
         body: JSON.stringify({ orderId }),
       });
 
-      if (result.success) {
+      if (result.success && result.trackingNumber) {
+        setShipment((prev) =>
+          prev
+            ? { ...prev, trackingNumber: result.trackingNumber, status: result.mappedStatus || prev.status }
+            : prev
+        );
         setTrackingInfo(result.tracking || null);
-        if (result.trackingNumber) {
-          setShipment((prev) =>
-            prev
-              ? { ...prev, trackingNumber: result.trackingNumber, status: result.mappedStatus }
-              : prev
-          );
-        }
         setView("tracking");
       } else {
         setView("pushed");
@@ -205,7 +200,7 @@ function Extension() {
       <BlockStack gap="base">
         {/* Error Banner */}
         {view === "error" && (
-          <Banner status="critical" title="Error">
+          <Banner tone="critical" title="Error">
             <Text>{error}</Text>
           </Banner>
         )}
@@ -218,29 +213,29 @@ function Extension() {
           <>
             <Text fontWeight="bold">Package Dimensions</Text>
             <InlineStack gap="base">
-              <TextField
+              <NumberField
                 label="Weight (lbs)"
                 value={weight}
                 onChange={setWeight}
-                type="number"
+                inputMode="decimal"
               />
-              <TextField
+              <NumberField
                 label="Length (in)"
                 value={length}
                 onChange={setLength}
-                type="number"
+                inputMode="decimal"
               />
-              <TextField
+              <NumberField
                 label="Width (in)"
                 value={width}
                 onChange={setWidth}
-                type="number"
+                inputMode="decimal"
               />
-              <TextField
+              <NumberField
                 label="Height (in)"
                 value={height}
                 onChange={setHeight}
-                type="number"
+                inputMode="decimal"
               />
             </InlineStack>
             <Button onPress={handleEstimate}>Get Shipping Estimates</Button>
@@ -251,22 +246,15 @@ function Extension() {
         {view === "estimate" && (
           <>
             <Text fontWeight="bold">Shipping Options</Text>
-            {estimates.map((est) => (
-              <InlineStack key={est.productCode} gap="base" blockAlignment="center">
-                <input
-                  type="radio"
-                  name="product"
-                  checked={selectedProduct === est.productCode}
-                  onChange={() => setSelectedProduct(est.productCode)}
-                />
-                <BlockStack gap="extraTight">
-                  <Text fontWeight="semibold">{est.productName}</Text>
-                  <Text>
-                    ${est.totalPrice.toFixed(2)} {est.currencyCode} — {est.chargedWeight} lbs
-                  </Text>
-                </BlockStack>
-              </InlineStack>
-            ))}
+            <Select
+              label="Select shipping product"
+              value={selectedProduct}
+              onChange={setSelectedProduct}
+              options={estimates.map((est) => ({
+                value: est.productCode,
+                label: `${est.productName} — $${est.totalPrice.toFixed(2)} ${est.currencyCode} (${est.chargedWeight} lbs)`,
+              }))}
+            />
             <Divider />
             <InlineStack gap="base">
               <Button onPress={() => setView("idle")}>Back</Button>
@@ -280,8 +268,8 @@ function Extension() {
         {/* Pushed — label created */}
         {view === "pushed" && shipment && (
           <>
-            <Banner status="success" title="Label Created">
-              <BlockStack gap="extraTight">
+            <Banner tone="success" title="Label Created">
+              <BlockStack gap="small">
                 <Text>Product: {shipment.productName}</Text>
                 <Text>Cost: ${shipment.shippingCost.toFixed(2)}</Text>
                 <Text>Order No: {shipment.omsOrderNo}</Text>
@@ -298,17 +286,17 @@ function Extension() {
         {view === "tracking" && shipment && (
           <>
             <Banner
-              status={shipment.status === "delivered" ? "success" : "info"}
+              tone={shipment.status === "delivered" ? "success" : "info"}
               title={`Status: ${shipment.status.replace(/_/g, " ").toUpperCase()}`}
             >
-              <BlockStack gap="extraTight">
+              <BlockStack gap="small">
                 {shipment.trackingNumber && (
                   <Text>Tracking: {shipment.trackingNumber}</Text>
                 )}
               </BlockStack>
             </Banner>
             {trackingInfo && (trackingInfo as { fromDetail?: unknown[] }).fromDetail && (
-              <BlockStack gap="extraTight">
+              <BlockStack gap="small">
                 <Text fontWeight="bold">Tracking History</Text>
                 {((trackingInfo as { fromDetail: Array<{ trackTime: string; trackDescription: string }> }).fromDetail || [])
                   .slice(0, 5)

@@ -1,10 +1,10 @@
 name = "OMS Label"
-client_id = ""
+client_id = "1dd87752b623a6187f77aad74158f5ba"
 application_url = "https://your-app.example.com"
 embedded = true
 
 [access_scopes]
-scopes = "read_orders,write_orders"
+scopes = "read_orders,write_orders,read_fulfillments,write_fulfillments,read_shipping,write_shipping"
 
 [auth]
 redirect_urls = [

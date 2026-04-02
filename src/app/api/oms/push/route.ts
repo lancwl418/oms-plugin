@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApi } from "@/lib/shopify/verify";
+import { fetchShopifyOrder } from "@/lib/shopify/orders";
 import { createOrder, getTrackingNumber } from "@/lib/eccangtms/client";
 import { mapOrderToEccangParams } from "@/lib/eccangtms/mapper";
 import { z } from "zod";
 
 const schema = z.object({
-  order: z.object({
-    orderNumber: z.string(),
-    customerName: z.string().optional(),
-    customerEmail: z.string().optional(),
-    shippingAddress: z.record(z.string()),
-    totalPrice: z.number(),
-    currency: z.string().default("USD"),
-  }),
+  orderId: z.string().min(1),
   productCode: z.string().min(1),
   packageInfo: z.object({
     weightLbs: z.number().positive(),
@@ -23,7 +17,7 @@ const schema = z.object({
 });
 
 /**
- * POST /api/oms/push — create shipping label. Order data in, label result out.
+ * POST /api/oms/push — create shipping label by orderId.
  */
 export async function POST(req: NextRequest) {
   const auth = await authenticateApi(req);
@@ -43,10 +37,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { order, productCode, packageInfo } = parsed.data;
+  const { orderId, productCode, packageInfo } = parsed.data;
   const creds = { apiToken: settings.omsApiToken, baseUrl: settings.omsBaseUrl };
 
   try {
+    const order = await fetchShopifyOrder(
+      auth.store.shopDomain,
+      auth.store.accessToken,
+      orderId
+    );
+
     const params = mapOrderToEccangParams(order, settings, productCode, packageInfo);
     const result = await createOrder(creds, params);
 
@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
       totalPrice: result.totalPrice,
       status: result.status,
       feeDetail: result.feeDetail,
+      shopifyOrderId: order.orderNumericId,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to create label";
