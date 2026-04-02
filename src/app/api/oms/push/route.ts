@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateApi, getOmsCredentials } from "@/lib/shopify/verify";
+import { authenticateApi } from "@/lib/shopify/verify";
+import { getAccessToken } from "@/lib/shopify/auth";
+import { getSettings } from "@/lib/shopify/metafields";
 import { createOrder, getTrackingNumber } from "@/lib/eccangtms/client";
 import { mapOrderToEccangParams } from "@/lib/eccangtms/mapper";
-import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
-const pushSchema = z.object({
-  orderId: z.string(),
+const schema = z.object({
+  order: z.object({
+    orderNumber: z.string(),
+    customerName: z.string().optional(),
+    customerEmail: z.string().optional(),
+    shippingAddress: z.record(z.string()),
+    totalPrice: z.number(),
+    currency: z.string().default("USD"),
+  }),
   productCode: z.string().min(1),
   packageInfo: z.object({
     weightLbs: z.number().positive(),
@@ -18,22 +26,24 @@ const pushSchema = z.object({
 
 /**
  * POST /api/oms/push
- * Push order to OMS to create shipping label.
+ * Create shipping label via OMS. Passthrough: order data in, label result out.
  */
 export async function POST(req: NextRequest) {
   const auth = await authenticateApi(req);
   if (auth.error) return auth.error;
 
-  const creds = getOmsCredentials(auth.store.settings);
-  if (!creds) {
-    return NextResponse.json(
-      { error: "OMS API token not configured" },
-      { status: 400 }
-    );
+  const accessToken = getAccessToken(auth.shop);
+  if (!accessToken) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  const settings = await getSettings(auth.shop, accessToken);
+  if (!settings?.omsApiToken) {
+    return NextResponse.json({ error: "OMS API token not configured" }, { status: 400 });
   }
 
   const body = await req.json();
-  const parsed = pushSchema.safeParse(body);
+  const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid data", details: parsed.error.flatten() },
@@ -41,101 +51,35 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { orderId, productCode, packageInfo } = parsed.data;
-
-  const order = await prisma.order.findFirst({
-    where: { id: orderId, storeId: auth.store.id },
-    include: { shipments: true },
-  });
-
-  if (!order) {
-    return NextResponse.json({ error: "Order not found" }, { status: 404 });
-  }
-
-  if (!order.shippingAddress) {
-    return NextResponse.json(
-      { error: "Order has no shipping address" },
-      { status: 400 }
-    );
-  }
-
-  // Check if already pushed
-  const existingOms = order.shipments.find(
-    (s) => s.omsOrderNo !== null
-  );
-  if (existingOms) {
-    return NextResponse.json(
-      { error: "Order already pushed to OMS", shipment: existingOms },
-      { status: 409 }
-    );
-  }
+  const { order, productCode, packageInfo } = parsed.data;
+  const creds = { apiToken: settings.omsApiToken, baseUrl: settings.omsBaseUrl };
 
   try {
-    const params = mapOrderToEccangParams(
-      {
-        orderNumber: order.shopifyOrderNumber || order.id.slice(0, 8),
-        customerName: order.customerName,
-        customerEmail: order.customerEmail,
-        shippingAddress: order.shippingAddress as Record<string, string>,
-        totalPrice: order.totalPrice ? parseFloat(String(order.totalPrice)) : 10,
-        currency: order.currency,
-      },
-      auth.store.settings!,
-      productCode,
-      packageInfo
-    );
-
+    const params = mapOrderToEccangParams(order, settings, productCode, packageInfo);
     const result = await createOrder(creds, params);
 
-    // Try to get serverNo (tracking number)
+    // Try to get tracking number
     let serverNo = result.serverNo || null;
     if (!serverNo && result.orderNo) {
       try {
-        const trackingNumbers = await getTrackingNumber(creds, result.orderNo);
-        if (trackingNumbers?.length > 0 && trackingNumbers[0].serverNo) {
-          serverNo = trackingNumbers[0].serverNo;
-        }
+        const nums = await getTrackingNumber(creds, result.orderNo);
+        if (nums?.length > 0) serverNo = nums[0].serverNo;
       } catch {
-        // Will be fetched later via track endpoint
+        // Will be available later
       }
     }
 
-    // Create shipment record
-    const shipment = await prisma.shipment.create({
-      data: {
-        storeId: auth.store.id,
-        orderId: order.id,
-        omsOrderNo: result.orderNo,
-        omsServerNo: serverNo,
-        productCode: result.productCode,
-        productName: result.productName,
-        trackingNumber: serverNo,
-        carrier: result.productName || productCode,
-        shippingCost: result.totalPrice,
-        status: result.status === 1 ? "label_created" : "pending",
-        rawResponse: JSON.parse(JSON.stringify(result)),
-      },
-    });
-
-    // Update order label status
-    await prisma.order.update({
-      where: { id: order.id },
-      data: { labelStatus: "CREATED" },
-    });
-
     return NextResponse.json({
       success: true,
-      shipment,
-      omsOrder: {
-        orderNo: result.orderNo,
-        serverNo,
-        productName: result.productName,
-        totalPrice: result.totalPrice,
-        status: result.status,
-      },
+      orderNo: result.orderNo,
+      serverNo,
+      productName: result.productName,
+      totalPrice: result.totalPrice,
+      status: result.status,
+      feeDetail: result.feeDetail,
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Failed to push to OMS";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const msg = e instanceof Error ? e.message : "Failed to create label";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

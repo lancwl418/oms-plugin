@@ -1,24 +1,10 @@
-import type { StoreSettings } from "@prisma/client";
+import type { OmsSettings } from "@/lib/shopify/metafields";
 import type {
   EccangOrderParams,
   EccangConsigneeShipper,
   EccangBox,
   EccangGoods,
 } from "./types";
-
-export interface ShippingAddress {
-  first_name?: string;
-  last_name?: string;
-  company?: string;
-  address1?: string;
-  address2?: string;
-  city?: string;
-  province?: string;
-  province_code?: string;
-  country_code?: string;
-  zip?: string;
-  phone?: string;
-}
 
 export interface PackageInfo {
   weightLbs: number;
@@ -31,18 +17,18 @@ export interface OrderForLabel {
   orderNumber: string;
   customerName?: string | null;
   customerEmail?: string | null;
-  shippingAddress: ShippingAddress;
+  shippingAddress: Record<string, string>;
   totalPrice: number;
   currency: string;
 }
 
 /**
- * Maps order + store settings to EccangTMS order params.
- * Shipper info comes from StoreSettings (per-merchant config).
+ * Maps order + merchant settings to EccangTMS order params.
+ * Shipper info comes from OmsSettings (stored in Shopify metafield).
  */
 export function mapOrderToEccangParams(
   order: OrderForLabel,
-  settings: StoreSettings,
+  settings: OmsSettings,
   productCode: string,
   pkg: PackageInfo
 ): EccangOrderParams {
@@ -55,7 +41,6 @@ export function mapOrderToEccangParams(
     "";
 
   const consigneeShipper: EccangConsigneeShipper = {
-    // Consignee (recipient)
     consigneeName: `${recipientName}-${orderNumber}`,
     consigneeCompanyName: addr.company || "",
     consigneeCountryCode: addr.country_code || "US",
@@ -66,7 +51,6 @@ export function mapOrderToEccangParams(
     consigneePostCode: addr.zip || "",
     consigneePhone: addr.phone || "",
     consigneeEmail: order.customerEmail || "",
-    // Shipper (from merchant's store settings)
     shipperName: settings.shipperName || "",
     shipperCompanyName: settings.shipperCompanyName || "",
     shipperCountryCode: settings.shipperCountryCode || "US",
@@ -109,7 +93,7 @@ export function mapOrderToEccangParams(
     customerNo: orderNumber,
     goodsType: 3,
     orderWeight: pkg.weightLbs,
-    weightSizeUnit: 2, // imperial (in/lb)
+    weightSizeUnit: 2,
     currencyCode: order.currency || "USD",
     async: 0,
     signatureService: "NO",

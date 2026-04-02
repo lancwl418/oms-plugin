@@ -1,130 +1,76 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateApi, getOmsCredentials } from "@/lib/shopify/verify";
+import { authenticateApi } from "@/lib/shopify/verify";
+import { getAccessToken } from "@/lib/shopify/auth";
+import { getSettings } from "@/lib/shopify/metafields";
 import { getTrackDetails, getTrackingNumber } from "@/lib/eccangtms/client";
 import { ECCANG_TRAVEL_STATUS } from "@/lib/eccangtms/types";
-import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
-const trackSchema = z.object({
-  orderId: z.string(),
+const schema = z.object({
+  orderNo: z.string().optional(),
+  serverNo: z.string().optional(),
 });
 
 /**
  * POST /api/oms/track
- * Get tracking details for an order's OMS shipment.
+ * Get tracking info from OMS. Passthrough.
  */
 export async function POST(req: NextRequest) {
   const auth = await authenticateApi(req);
   if (auth.error) return auth.error;
 
-  const creds = getOmsCredentials(auth.store.settings);
-  if (!creds) {
-    return NextResponse.json(
-      { error: "OMS API token not configured" },
-      { status: 400 }
-    );
+  const accessToken = getAccessToken(auth.shop);
+  if (!accessToken) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  const settings = await getSettings(auth.shop, accessToken);
+  if (!settings?.omsApiToken) {
+    return NextResponse.json({ error: "OMS API token not configured" }, { status: 400 });
   }
 
   const body = await req.json();
-  const parsed = trackSchema.safeParse(body);
+  const parsed = schema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid data", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Provide orderNo or serverNo" }, { status: 400 });
   }
 
-  const { orderId } = parsed.data;
-
-  const shipment = await prisma.shipment.findFirst({
-    where: { orderId, storeId: auth.store.id, omsOrderNo: { not: null } },
-  });
-
-  if (!shipment) {
-    return NextResponse.json(
-      { error: "No OMS shipment found for this order" },
-      { status: 404 }
-    );
-  }
-
-  let serverNo = shipment.omsServerNo || shipment.trackingNumber;
+  const creds = { apiToken: settings.omsApiToken, baseUrl: settings.omsBaseUrl };
+  let { serverNo } = parsed.data;
+  const { orderNo } = parsed.data;
 
   try {
-    // If serverNo missing, try fetching it
-    if (!serverNo && shipment.omsOrderNo) {
-      const trackingNumbers = await getTrackingNumber(creds, shipment.omsOrderNo);
-      if (trackingNumbers?.length > 0 && trackingNumbers[0].serverNo) {
-        serverNo = trackingNumbers[0].serverNo;
-        await prisma.shipment.update({
-          where: { id: shipment.id },
-          data: { omsServerNo: serverNo, trackingNumber: serverNo },
-        });
-      }
+    // If no serverNo, get it from orderNo
+    if (!serverNo && orderNo) {
+      const nums = await getTrackingNumber(creds, orderNo);
+      if (nums?.length > 0) serverNo = nums[0].serverNo;
     }
 
     if (!serverNo) {
       return NextResponse.json({
         success: true,
         message: "No tracking number assigned yet",
-        shipment,
       });
     }
 
-    // Get tracking details
-    let details;
-    try {
-      details = await getTrackDetails(creds, [serverNo]);
-    } catch {
+    const details = await getTrackDetails(creds, [serverNo]);
+    if (!details?.length) {
       return NextResponse.json({
         success: true,
         message: "No tracking info available yet",
-        shipment: { ...shipment, trackingNumber: serverNo },
-      });
-    }
-
-    if (!details || details.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: "No tracking info available yet",
-        shipment: { ...shipment, trackingNumber: serverNo },
+        trackingNumber: serverNo,
       });
     }
 
     const detail = details[0];
-    const mappedStatus =
-      ECCANG_TRAVEL_STATUS[String(detail.status)] || "unknown";
-
-    // Update shipment status
-    await prisma.shipment.update({
-      where: { id: shipment.id },
-      data: {
-        status: mappedStatus,
-        trackingNumber: serverNo,
-        ...(mappedStatus === "delivered"
-          ? { deliveredAt: new Date(detail.lastDate) }
-          : {}),
-        ...(mappedStatus === "in_transit" || mappedStatus === "collected"
-          ? { shippedAt: shipment.shippedAt || new Date() }
-          : {}),
-      },
-    });
-
-    // Update order label status if synced
-    if (mappedStatus === "delivered") {
-      await prisma.order.update({
-        where: { id: orderId },
-        data: { labelStatus: "SYNCED" },
-      });
-    }
-
     return NextResponse.json({
       success: true,
-      tracking: detail,
-      mappedStatus,
       trackingNumber: serverNo,
+      status: ECCANG_TRAVEL_STATUS[String(detail.status)] || "unknown",
+      tracking: detail,
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Failed to fetch tracking";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const msg = e instanceof Error ? e.message : "Failed to fetch tracking";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

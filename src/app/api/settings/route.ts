@@ -1,91 +1,57 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApi } from "@/lib/shopify/verify";
-import { prisma } from "@/lib/prisma";
-import { z } from "zod";
-
-const settingsSchema = z.object({
-  omsApiToken: z.string().optional(),
-  omsBaseUrl: z.string().url().optional(),
-  shipperName: z.string().optional(),
-  shipperCompanyName: z.string().optional(),
-  shipperCountryCode: z.string().max(2).optional(),
-  shipperState: z.string().optional(),
-  shipperCity: z.string().optional(),
-  shipperAddress1: z.string().optional(),
-  shipperAddress2: z.string().optional(),
-  shipperPostCode: z.string().optional(),
-  shipperPhone: z.string().optional(),
-  shipperEmail: z.string().email().optional(),
-  defaultWeightLbs: z.number().positive().optional(),
-  defaultLengthIn: z.number().positive().optional(),
-  defaultWidthIn: z.number().positive().optional(),
-  defaultHeightIn: z.number().positive().optional(),
-});
+import { getAccessToken } from "@/lib/shopify/auth";
+import { getSettings, saveSettings, OmsSettings } from "@/lib/shopify/metafields";
 
 /**
- * GET /api/settings
- * Get current store settings.
+ * GET /api/settings — read settings from shop metafield.
  */
 export async function GET(req: NextRequest) {
   const auth = await authenticateApi(req);
   if (auth.error) return auth.error;
 
-  const settings = auth.store.settings;
-  if (!settings) {
-    return NextResponse.json({});
+  const accessToken = getAccessToken(auth.shop);
+  if (!accessToken) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  // Don't expose the full API token — mask it
+  const settings = await getSettings(auth.shop, accessToken);
+  if (!settings) return NextResponse.json({});
+
+  // Mask API token
   return NextResponse.json({
     ...settings,
     omsApiToken: settings.omsApiToken
-      ? `${settings.omsApiToken.slice(0, 8)}...${settings.omsApiToken.slice(-4)}`
+      ? `${settings.omsApiToken.slice(0, 8)}...`
       : null,
     hasOmsToken: !!settings.omsApiToken,
   });
 }
 
 /**
- * PUT /api/settings
- * Update store settings.
+ * PUT /api/settings — save settings to shop metafield.
  */
 export async function PUT(req: NextRequest) {
   const auth = await authenticateApi(req);
   if (auth.error) return auth.error;
 
+  const accessToken = getAccessToken(auth.shop);
+  if (!accessToken) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
   const body = await req.json();
-  const parsed = settingsSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid data", details: parsed.error.flatten() },
-      { status: 400 }
-    );
-  }
 
-  const data = parsed.data;
+  // Merge with existing settings
+  const existing = await getSettings(auth.shop, accessToken);
+  const merged: OmsSettings = {
+    ...existing,
+    ...body,
+    // Keep existing token if not provided
+    omsApiToken: body.omsApiToken || existing?.omsApiToken || "",
+  };
 
-  // Filter out undefined values
-  const updateData: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (value !== undefined) {
-      updateData[key] = value;
-    }
-  }
+  await saveSettings(auth.shop, accessToken, merged);
 
-  const settings = await prisma.storeSettings.upsert({
-    where: { storeId: auth.store.id },
-    update: updateData,
-    create: {
-      storeId: auth.store.id,
-      ...updateData,
-    },
-  });
-
-  return NextResponse.json({
-    ...settings,
-    omsApiToken: settings.omsApiToken
-      ? `${settings.omsApiToken.slice(0, 8)}...${settings.omsApiToken.slice(-4)}`
-      : null,
-    hasOmsToken: !!settings.omsApiToken,
-  });
+  return NextResponse.json({ success: true });
 }

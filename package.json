@@ -6,15 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "db:generate": "prisma generate",
-    "db:push": "prisma db push",
-    "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio",
     "shopify": "shopify",
     "shopify:dev": "shopify app dev"
   },
   "dependencies": {
-    "@prisma/client": "^6.19.2",
     "@shopify/shopify-api": "^13.0.0",
     "next": "^15.3.0",
     "react": "^19.0.0",
@@ -25,7 +20,6 @@
     "@shopify/cli": "^3.77.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
-    "prisma": "^6.19.2",
     "typescript": "^5.7.0"
   }
 }
