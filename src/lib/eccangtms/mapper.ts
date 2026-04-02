@@ -1,4 +1,4 @@
-import type { OmsSettings } from "@/lib/shopify/metafields";
+import type { StoreSettings } from "@prisma/client";
 import type {
   EccangOrderParams,
   EccangConsigneeShipper,
@@ -24,11 +24,11 @@ export interface OrderForLabel {
 
 /**
  * Maps order + merchant settings to EccangTMS order params.
- * Shipper info comes from OmsSettings (stored in Shopify metafield).
+ * Shipper info comes from StoreSettings (per-merchant, stored in DB).
  */
 export function mapOrderToEccangParams(
   order: OrderForLabel,
-  settings: OmsSettings,
+  settings: StoreSettings,
   productCode: string,
   pkg: PackageInfo
 ): EccangOrderParams {

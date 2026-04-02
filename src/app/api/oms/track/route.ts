@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApi } from "@/lib/shopify/verify";
-import { getAccessToken } from "@/lib/shopify/auth";
-import { getSettings } from "@/lib/shopify/metafields";
 import { getTrackDetails, getTrackingNumber } from "@/lib/eccangtms/client";
 import { ECCANG_TRAVEL_STATUS } from "@/lib/eccangtms/types";
 import { z } from "zod";
@@ -12,19 +10,13 @@ const schema = z.object({
 });
 
 /**
- * POST /api/oms/track
- * Get tracking info from OMS. Passthrough.
+ * POST /api/oms/track — get tracking info. OrderNo/serverNo in, tracking out.
  */
 export async function POST(req: NextRequest) {
   const auth = await authenticateApi(req);
   if (auth.error) return auth.error;
 
-  const accessToken = getAccessToken(auth.shop);
-  if (!accessToken) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
-  const settings = await getSettings(auth.shop, accessToken);
+  const settings = auth.store.settings;
   if (!settings?.omsApiToken) {
     return NextResponse.json({ error: "OMS API token not configured" }, { status: 400 });
   }
@@ -40,17 +32,13 @@ export async function POST(req: NextRequest) {
   const { orderNo } = parsed.data;
 
   try {
-    // If no serverNo, get it from orderNo
     if (!serverNo && orderNo) {
       const nums = await getTrackingNumber(creds, orderNo);
       if (nums?.length > 0) serverNo = nums[0].serverNo;
     }
 
     if (!serverNo) {
-      return NextResponse.json({
-        success: true,
-        message: "No tracking number assigned yet",
-      });
+      return NextResponse.json({ success: true, message: "No tracking number assigned yet" });
     }
 
     const details = await getTrackDetails(creds, [serverNo]);

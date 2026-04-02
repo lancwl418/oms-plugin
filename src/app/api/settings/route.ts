@@ -1,24 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApi } from "@/lib/shopify/verify";
-import { getAccessToken } from "@/lib/shopify/auth";
-import { getSettings, saveSettings, OmsSettings } from "@/lib/shopify/metafields";
+import { prisma } from "@/lib/prisma";
 
 /**
- * GET /api/settings — read settings from shop metafield.
+ * GET /api/settings — read store settings from DB.
  */
 export async function GET(req: NextRequest) {
   const auth = await authenticateApi(req);
   if (auth.error) return auth.error;
 
-  const accessToken = getAccessToken(auth.shop);
-  if (!accessToken) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
-  const settings = await getSettings(auth.shop, accessToken);
+  const settings = auth.store.settings;
   if (!settings) return NextResponse.json({});
 
-  // Mask API token
   return NextResponse.json({
     ...settings,
     omsApiToken: settings.omsApiToken
@@ -29,29 +22,30 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * PUT /api/settings — save settings to shop metafield.
+ * PUT /api/settings — update store settings in DB.
  */
 export async function PUT(req: NextRequest) {
   const auth = await authenticateApi(req);
   if (auth.error) return auth.error;
 
-  const accessToken = getAccessToken(auth.shop);
-  if (!accessToken) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
   const body = await req.json();
 
-  // Merge with existing settings
-  const existing = await getSettings(auth.shop, accessToken);
-  const merged: OmsSettings = {
-    ...existing,
-    ...body,
-    // Keep existing token if not provided
-    omsApiToken: body.omsApiToken || existing?.omsApiToken || "",
-  };
+  // Filter out undefined/null values
+  const updateData: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (value !== undefined && value !== null && value !== "") {
+      updateData[key] = value;
+    }
+  }
 
-  await saveSettings(auth.shop, accessToken, merged);
+  const settings = await prisma.storeSettings.upsert({
+    where: { storeId: auth.store.id },
+    update: updateData,
+    create: { storeId: auth.store.id, ...updateData },
+  });
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({
+    success: true,
+    hasOmsToken: !!settings.omsApiToken,
+  });
 }

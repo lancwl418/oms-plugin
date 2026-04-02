@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApi } from "@/lib/shopify/verify";
-import { getAccessToken } from "@/lib/shopify/auth";
-import { getSettings } from "@/lib/shopify/metafields";
 import { calculateShipping } from "@/lib/eccangtms/client";
 import { mapOrderToEccangParams } from "@/lib/eccangtms/mapper";
 import { z } from "zod";
@@ -24,19 +22,13 @@ const schema = z.object({
 });
 
 /**
- * POST /api/oms/estimate
- * Estimate shipping costs. Passthrough: order data in, estimates out.
+ * POST /api/oms/estimate — estimate shipping costs. Order data in, estimates out.
  */
 export async function POST(req: NextRequest) {
   const auth = await authenticateApi(req);
   if (auth.error) return auth.error;
 
-  const accessToken = getAccessToken(auth.shop);
-  if (!accessToken) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
-  const settings = await getSettings(auth.shop, accessToken);
+  const settings = auth.store.settings;
   if (!settings?.omsApiToken) {
     return NextResponse.json({ error: "OMS API token not configured" }, { status: 400 });
   }
@@ -50,18 +42,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { order, packageInfo } = parsed.data;
-
   try {
-    const params = mapOrderToEccangParams(order, settings, "", packageInfo);
+    const params = mapOrderToEccangParams(parsed.data.order, settings, "", parsed.data.packageInfo);
     const { productCode: _, ...paramsWithoutProduct } = params;
     const estimates = await calculateShipping(
       { apiToken: settings.omsApiToken, baseUrl: settings.omsBaseUrl },
       paramsWithoutProduct as typeof params
     );
-
-    const sorted = [...estimates].sort((a, b) => a.totalPrice - b.totalPrice);
-    return NextResponse.json(sorted);
+    return NextResponse.json([...estimates].sort((a, b) => a.totalPrice - b.totalPrice));
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to estimate";
     return NextResponse.json({ error: msg }, { status: 500 });

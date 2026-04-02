@@ -1,19 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { shopify } from "./config";
-
-/**
- * In-memory store for OAuth sessions and access tokens.
- * In production, use Redis or similar for multi-instance deploys.
- */
-const tokenStore = new Map<string, string>(); // shop -> accessToken
-
-export function getAccessToken(shop: string): string | null {
-  return tokenStore.get(shop) || null;
-}
-
-export function setAccessToken(shop: string, token: string) {
-  tokenStore.set(shop, token);
-}
+import { sessionStorage } from "./session-storage";
+import { prisma } from "@/lib/prisma";
 
 /**
  * Begin OAuth — redirect to Shopify authorization page.
@@ -30,11 +18,15 @@ export async function beginAuth(req: NextRequest): Promise<NextResponse> {
     isOnline: false,
   });
 
+  if (authRoute.session) {
+    await sessionStorage.storeSession(authRoute.session);
+  }
+
   return NextResponse.redirect(authRoute.url);
 }
 
 /**
- * Handle OAuth callback — exchange code for access token.
+ * Handle OAuth callback — exchange code for access token, save store to DB.
  */
 export async function handleAuthCallback(
   req: NextRequest
@@ -44,11 +36,32 @@ export async function handleAuthCallback(
   });
 
   const { session } = callback;
+  await sessionStorage.storeSession(session);
 
-  // Store access token in memory
-  setAccessToken(session.shop, session.accessToken!);
+  // Upsert Store record
+  const store = await prisma.store.upsert({
+    where: { shopDomain: session.shop },
+    update: {
+      accessToken: session.accessToken!,
+      scopes: session.scope || "",
+      isActive: true,
+      uninstalledAt: null,
+    },
+    create: {
+      shopDomain: session.shop,
+      accessToken: session.accessToken!,
+      scopes: session.scope || "",
+    },
+  });
 
-  // Redirect to embedded app settings
+  // Ensure StoreSettings exists
+  const existing = await prisma.storeSettings.findUnique({
+    where: { storeId: store.id },
+  });
+  if (!existing) {
+    await prisma.storeSettings.create({ data: { storeId: store.id } });
+  }
+
   const appUrl = process.env.SHOPIFY_APP_URL || "http://localhost:3000";
   return NextResponse.redirect(`${appUrl}/settings?shop=${session.shop}`);
 }

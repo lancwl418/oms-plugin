@@ -1,0 +1,74 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Shopify Store (one per installed merchant) ─────────────────
+model Store {
+  id              String   @id @default(cuid())
+  shopDomain      String   @unique // e.g. "my-store.myshopify.com"
+  shopName        String?
+  accessToken     String   // Shopify OAuth access token
+  scopes          String?
+  isActive        Boolean  @default(true)
+  installedAt     DateTime @default(now())
+  uninstalledAt   DateTime?
+
+  settings        StoreSettings?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ─── Store Settings (OMS credentials + shipper info) ────────────
+model StoreSettings {
+  id              String   @id @default(cuid())
+  storeId         String   @unique
+  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  // OMS (EccangTMS) credentials
+  omsApiToken     String?
+  omsBaseUrl      String   @default("https://api.saas.eccangtms.com")
+
+  // Shipper (sender) info
+  shipperName         String?
+  shipperCompanyName  String?
+  shipperCountryCode  String   @default("US")
+  shipperState        String?
+  shipperCity         String?
+  shipperAddress1     String?
+  shipperAddress2     String?
+  shipperPostCode     String?
+  shipperPhone        String?
+  shipperEmail        String?
+
+  // Default package dimensions
+  defaultWeightLbs    Float?
+  defaultLengthIn     Float?
+  defaultWidthIn      Float?
+  defaultHeightIn     Float?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ─── Session (Shopify OAuth session storage) ────────────────────
+model Session {
+  id          String   @id
+  shop        String
+  state       String
+  isOnline    Boolean  @default(false)
+  scope       String?
+  expires     DateTime?
+  accessToken String?
+  userId      BigInt?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([shop])
+}

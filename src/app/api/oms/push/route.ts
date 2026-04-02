@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApi } from "@/lib/shopify/verify";
-import { getAccessToken } from "@/lib/shopify/auth";
-import { getSettings } from "@/lib/shopify/metafields";
 import { createOrder, getTrackingNumber } from "@/lib/eccangtms/client";
 import { mapOrderToEccangParams } from "@/lib/eccangtms/mapper";
 import { z } from "zod";
@@ -25,19 +23,13 @@ const schema = z.object({
 });
 
 /**
- * POST /api/oms/push
- * Create shipping label via OMS. Passthrough: order data in, label result out.
+ * POST /api/oms/push — create shipping label. Order data in, label result out.
  */
 export async function POST(req: NextRequest) {
   const auth = await authenticateApi(req);
   if (auth.error) return auth.error;
 
-  const accessToken = getAccessToken(auth.shop);
-  if (!accessToken) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
-  const settings = await getSettings(auth.shop, accessToken);
+  const settings = auth.store.settings;
   if (!settings?.omsApiToken) {
     return NextResponse.json({ error: "OMS API token not configured" }, { status: 400 });
   }
@@ -58,7 +50,6 @@ export async function POST(req: NextRequest) {
     const params = mapOrderToEccangParams(order, settings, productCode, packageInfo);
     const result = await createOrder(creds, params);
 
-    // Try to get tracking number
     let serverNo = result.serverNo || null;
     if (!serverNo && result.orderNo) {
       try {
