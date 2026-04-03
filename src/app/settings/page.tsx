@@ -2,6 +2,25 @@
 
 import { useState, useEffect, useCallback } from "react";
 
+declare global {
+  interface Window {
+    shopify?: {
+      idToken: () => Promise<string>;
+    };
+  }
+}
+
+async function fetchWithAuth(url: string, options: RequestInit = {}) {
+  const token = await window.shopify?.idToken();
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...options.headers,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+}
+
 interface Settings {
   hasOmsToken: boolean;
   omsApiToken: string | null;
@@ -50,9 +69,7 @@ export default function SettingsPage() {
 
   const fetchSettings = useCallback(async () => {
     try {
-      const res = await fetch("/api/settings", {
-        headers: { Authorization: `Bearer ${await getSessionToken()}` },
-      });
+      const res = await fetchWithAuth("/api/settings");
       if (res.ok) {
         const data = await res.json();
         setSettings(data);
@@ -111,12 +128,9 @@ export default function SettingsPage() {
     if (defaultHeightIn) body.defaultHeightIn = parseFloat(defaultHeightIn);
 
     try {
-      const res = await fetch("/api/settings", {
+      const res = await fetchWithAuth("/api/settings", {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${await getSessionToken()}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
 
@@ -270,13 +284,3 @@ function Field({
   );
 }
 
-/**
- * Get Shopify session token from App Bridge.
- * In production this uses @shopify/app-bridge-react.
- * Placeholder for now.
- */
-async function getSessionToken(): Promise<string> {
-  // TODO: integrate with Shopify App Bridge
-  // import { getSessionToken } from "@shopify/app-bridge-utils";
-  return "";
-}

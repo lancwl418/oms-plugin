@@ -1,0 +1,6 @@
+[commands]
+dev = "npm run dev"
+
+[roles]
+frontend = { port = 3000, hmr_server = "http://localhost:3000" }
+backend = { port = 3000 }

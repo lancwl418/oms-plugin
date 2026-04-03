@@ -15,11 +15,15 @@ export async function authenticateApi(
   | { store: StoreWithSettings; error?: never }
   | { store?: never; error: NextResponse }
 > {
+  // App Bridge v4 sends token via Authorization header or shopify-id-token header
   const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
+  const idToken = req.headers.get("shopify-id-token");
+  const token = authHeader?.replace("Bearer ", "") || idToken;
+
+  if (!token) {
     return {
       error: NextResponse.json(
-        { error: "Missing Authorization header" },
+        { error: "Missing session token" },
         { status: 401 }
       ),
     };
@@ -27,7 +31,6 @@ export async function authenticateApi(
 
   let shopDomain: string;
   try {
-    const token = authHeader.replace("Bearer ", "");
     const payload = await shopify.session.decodeSessionToken(token);
     shopDomain = payload.dest.replace("https://", "");
   } catch {

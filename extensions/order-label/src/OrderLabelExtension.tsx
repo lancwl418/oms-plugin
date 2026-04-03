@@ -11,7 +11,7 @@ import {
   NumberField,
   Select,
 } from "@shopify/ui-extensions-react/admin";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 interface Estimate {
   productCode: string;
@@ -48,7 +48,7 @@ function Extension() {
   const [width, setWidth] = useState(10);
   const [height, setHeight] = useState(3);
 
-  async function apiCall(path: string, options: RequestInit = {}) {
+  const apiCall = useCallback(async (path: string, options: RequestInit = {}) => {
     const token = await auth.idToken();
     if (!token) {
       throw new Error("Could not get session token");
@@ -62,7 +62,7 @@ function Extension() {
       },
     });
     return res.json();
-  }
+  }, [auth]);
 
   function getPackageInfo() {
     return {
@@ -76,15 +76,10 @@ function Extension() {
   // Check if order already has a shipment
   useEffect(() => {
     if (!orderId) return;
-    checkExistingShipment();
-  }, [orderId]);
-
-  async function checkExistingShipment() {
-    try {
-      const result = await apiCall("/oms/track", {
-        method: "POST",
-        body: JSON.stringify({ orderId }),
-      });
+    apiCall("/oms/track", {
+      method: "POST",
+      body: JSON.stringify({ orderId }),
+    }).then((result) => {
       if (result.success && result.trackingNumber) {
         setShipment({
           omsOrderNo: "",
@@ -96,10 +91,10 @@ function Extension() {
         setTrackingInfo(result.tracking || null);
         setView("tracking");
       }
-    } catch {
+    }).catch(() => {
       // No existing shipment — stay on idle
-    }
-  }
+    });
+  }, [orderId, apiCall]);
 
   async function handleEstimate() {
     setView("loading");
@@ -200,9 +195,7 @@ function Extension() {
       <BlockStack gap="base">
         {/* Error Banner */}
         {view === "error" && (
-          <Banner tone="critical" title="Error">
-            <Text>{error}</Text>
-          </Banner>
+          <Banner tone="critical" title={error} />
         )}
 
         {/* Loading */}
@@ -217,25 +210,21 @@ function Extension() {
                 label="Weight (lbs)"
                 value={weight}
                 onChange={setWeight}
-                inputMode="decimal"
               />
               <NumberField
                 label="Length (in)"
                 value={length}
                 onChange={setLength}
-                inputMode="decimal"
               />
               <NumberField
                 label="Width (in)"
                 value={width}
                 onChange={setWidth}
-                inputMode="decimal"
               />
               <NumberField
                 label="Height (in)"
                 value={height}
                 onChange={setHeight}
-                inputMode="decimal"
               />
             </InlineStack>
             <Button onPress={handleEstimate}>Get Shipping Estimates</Button>
@@ -268,16 +257,15 @@ function Extension() {
         {/* Pushed — label created */}
         {view === "pushed" && shipment && (
           <>
-            <Banner tone="success" title="Label Created">
-              <BlockStack gap="small">
-                <Text>Product: {shipment.productName}</Text>
-                <Text>Cost: ${shipment.shippingCost.toFixed(2)}</Text>
-                <Text>Order No: {shipment.omsOrderNo}</Text>
-                {shipment.trackingNumber && (
-                  <Text>Tracking: {shipment.trackingNumber}</Text>
-                )}
-              </BlockStack>
-            </Banner>
+            <Banner tone="success" title="Label Created" />
+            <BlockStack gap="small">
+              <Text>Product: {shipment.productName}</Text>
+              <Text>Cost: ${shipment.shippingCost.toFixed(2)}</Text>
+              <Text>Order No: {shipment.omsOrderNo}</Text>
+              {shipment.trackingNumber && (
+                <Text>Tracking: {shipment.trackingNumber}</Text>
+              )}
+            </BlockStack>
             <Button onPress={handleRefreshTracking}>Refresh Tracking</Button>
           </>
         )}
@@ -288,13 +276,10 @@ function Extension() {
             <Banner
               tone={shipment.status === "delivered" ? "success" : "info"}
               title={`Status: ${shipment.status.replace(/_/g, " ").toUpperCase()}`}
-            >
-              <BlockStack gap="small">
-                {shipment.trackingNumber && (
-                  <Text>Tracking: {shipment.trackingNumber}</Text>
-                )}
-              </BlockStack>
-            </Banner>
+            />
+            {shipment.trackingNumber && (
+              <Text>Tracking: {shipment.trackingNumber}</Text>
+            )}
             {trackingInfo && (trackingInfo as { fromDetail?: unknown[] }).fromDetail && (
               <BlockStack gap="small">
                 <Text fontWeight="bold">Tracking History</Text>

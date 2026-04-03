@@ -1,18 +1,23 @@
-name = "OMS Label"
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
 client_id = "1dd87752b623a6187f77aad74158f5ba"
-application_url = "https://your-app.example.com"
+name = "Eccang OMS"
+application_url = "https://example.com"
 embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+dev_store_url = "acumen-dev.myshopify.com"
+
+[webhooks]
+api_version = "2025-04"
 
 [access_scopes]
 scopes = "read_orders,write_orders,read_fulfillments,write_fulfillments,read_shipping,write_shipping"
+use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [
-  "https://your-app.example.com/api/auth/callback"
-]
-
-[webhooks]
-api_version = "2025-01"
+redirect_urls = [ "https://example.com/api/auth/callback" ]
 
 [pos]
 embedded = false
